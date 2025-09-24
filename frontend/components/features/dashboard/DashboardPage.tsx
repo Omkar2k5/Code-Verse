@@ -2,10 +2,25 @@
 
 import { useState, useEffect, useRef } from "react"
 import { motion } from "framer-motion"
-import { Camera, Bell, Home, Play, Eye, EyeOff, Volume2, VolumeX, MoreVertical, AlertTriangle, Wifi, WifiOff } from "lucide-react"
+import { 
+  IconAlertTriangle, 
+  IconBellRinging, 
+  IconPlayerPause, 
+  IconPlayerPlay,
+  IconWifi,
+  IconCircleCheck,
+  IconCpu,
+  IconArrowLeft,
+  IconDots,
+  IconWifiOff
+} from "@tabler/icons-react"
 import Link from "next/link"
 import { io, Socket } from "socket.io-client"
-import DarkVeil from "../../common/DarkVeil"
+import { ScrollArea } from "../../ui/scroll-area"
+import { Alert, AlertDescription, AlertTitle } from "../../ui/alert"
+import { Button } from "../../ui/button"
+import { Badge } from "../../ui/badge"
+import { Card } from "../../ui/card"
 
 interface Alert {
   message: string;
@@ -27,6 +42,7 @@ interface Detection {
 export default function DashboardPage() {
   const [selectedCamera, setSelectedCamera] = useState('main-entrance')
   const [isPlaying, setIsPlaying] = useState(true)
+  const [isPaused, setIsPaused] = useState(false)
   const [isAudioEnabled, setIsAudioEnabled] = useState(true)
   const [isFullScreen, setIsFullScreen] = useState(false)
   const [alerts, setAlerts] = useState<Alert[]>([])
@@ -34,6 +50,7 @@ export default function DashboardPage() {
   const [streamError, setStreamError] = useState(false)
   const [modelStatus, setModelStatus] = useState<any>(null)
   const [detectionHistory, setDetectionHistory] = useState<Detection[]>([])
+  const [showCameraMessage, setShowCameraMessage] = useState('')
   const socketRef = useRef<Socket | null>(null)
 
   // Initialize backend connections
@@ -64,10 +81,12 @@ export default function DashboardPage() {
     
     return () => {
       socket.disconnect()
+      // Stop all cameras when component unmounts
+      stopAllCameras()
     }
   }, [])
 
-  // Fetch initial data
+  // Fetch initial data and initialize cameras
   useEffect(() => {
     const fetchInitialData = async () => {
       try {
@@ -84,6 +103,10 @@ export default function DashboardPage() {
           const historyData = await historyResponse.json()
           setDetectionHistory(historyData.detections || [])
         }
+        
+        // Note: Main camera (index 0) is already running via existing backend
+        // Only external cameras will need initialization when selected
+        
       } catch (error) {
         console.error('Error fetching initial data:', error)
       }
@@ -92,366 +115,497 @@ export default function DashboardPage() {
     fetchInitialData()
   }, [])
 
+  // Cleanup cameras on page unload/refresh
+  useEffect(() => {
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      // Stop all cameras when user leaves the page
+      stopAllCameras()
+    }
+
+    const handleUnload = () => {
+      stopAllCameras()
+    }
+
+    window.addEventListener('beforeunload', handleBeforeUnload)
+    window.addEventListener('unload', handleUnload)
+
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload)
+      window.removeEventListener('unload', handleUnload)
+    }
+  }, [])
+
   const cameraLocations = [
     {
       id: 'main-entrance',
       name: 'Main Entrance',
       status: modelStatus?.camera_status === 'connected' ? 'online' : 'offline',
-      lastUpdate: '2 min ago'
+      lastUpdate: '2 min ago',
+      streamUrl: 'http://localhost:5000/stream', // Main working camera
+      cameraIndex: 0,
+      isActive: true
     },
     {
       id: 'parking-lot',
       name: 'Parking Lot',
       status: 'offline',
-      lastUpdate: '1 min ago'
+      lastUpdate: '1 min ago',
+      streamUrl: 'http://localhost:5000/stream/1', // Future external camera
+      cameraIndex: 1,
+      isActive: false
     },
     {
       id: 'side-entrance',
       name: 'Side Entrance',
       status: 'offline',
-      lastUpdate: '15 min ago'
+      lastUpdate: '15 min ago',
+      streamUrl: 'http://localhost:5000/stream/2', // Future external camera
+      cameraIndex: 2,
+      isActive: false
     },
     {
       id: 'lobby',
       name: 'Lobby',
       status: 'offline',
-      lastUpdate: '30 sec ago'
+      lastUpdate: '30 sec ago',
+      streamUrl: 'http://localhost:5000/stream/3', // Future external camera
+      cameraIndex: 3,
+      isActive: false
     },
     {
       id: 'cafeteria',
       name: 'Cafeteria',
       status: 'offline',
-      lastUpdate: '5 min ago'
+      lastUpdate: '5 min ago',
+      streamUrl: 'http://localhost:5000/stream/4', // Future external camera
+      cameraIndex: 4,
+      isActive: false
     }
   ]
 
-  return (
-    <div className="h-screen bg-gradient-to-br from-gray-900 via-blue-900/10 to-purple-900/10 flex flex-col relative overflow-hidden">
-      {/* Animated Background */}
-      <div className="fixed inset-0 z-0">
-        <DarkVeil />
-        <div className="absolute inset-0 bg-gradient-to-br from-gray-900/80 via-blue-900/20 to-purple-900/20" />
-      </div>
+  const getActiveStreamUrl = () => {
+    const camera = cameraLocations.find(cam => cam.id === selectedCamera)
+    return camera ? camera.streamUrl : cameraLocations[0].streamUrl
+  }
 
-      {/* Header */}
-      <header className="bg-gray-900/80 backdrop-blur-md border-b border-gray-700/50 px-6 py-4 relative z-10">
+  const getActiveCameraName = () => {
+    const camera = cameraLocations.find(cam => cam.id === selectedCamera)
+    return camera ? camera.name : cameraLocations[0].name
+  }
+
+  const handleCameraSelect = async (cameraId: string) => {
+    const newCamera = cameraLocations.find(cam => cam.id === cameraId)
+    
+    // If selecting an external camera that's not active, show message
+    if (newCamera && !newCamera.isActive) {
+      setShowCameraMessage(`${newCamera.name} camera is not currently connected. Please connect external camera ${newCamera.cameraIndex} to enable this feed.`)
+      setTimeout(() => setShowCameraMessage(''), 4000)
+      return
+    }
+    
+    // For active cameras, proceed with selection
+    setSelectedCamera(cameraId)
+    setIsPaused(false)
+    setShowCameraMessage('')
+  }
+
+  const togglePause = () => {
+    setIsPaused(!isPaused)
+  }
+
+  const stopAllCameras = async () => {
+    console.log('Stopping external cameras...')
+    try {
+      // Stop only external cameras (not the main active camera)
+      for (const camera of cameraLocations) {
+        if (!camera.isActive) {
+          await fetch(`http://localhost:5000/api/camera/stop/${camera.cameraIndex}`, {
+            method: 'POST'
+          })
+        }
+      }
+      
+      console.log('External cameras stopped successfully')
+    } catch (error) {
+      console.error('Error stopping external cameras:', error)
+    }
+  }
+
+  const initializeCamera = async (cameraIndex: number) => {
+    try {
+      const response = await fetch(`http://localhost:5000/api/camera/initialize/${cameraIndex}`, {
+        method: 'POST'
+      })
+      
+      if (response.ok) {
+        console.log(`Camera ${cameraIndex} initialized successfully`)
+        return true
+      } else {
+        console.error(`Failed to initialize camera ${cameraIndex}`)
+        return false
+      }
+    } catch (error) {
+      console.error(`Error initializing camera ${cameraIndex}:`, error)
+      return false
+    }
+  }
+
+  const checkCameraAvailability = async (cameraIndex: number) => {
+    try {
+      const response = await fetch(`http://localhost:5000/api/camera/check/${cameraIndex}`)
+      if (response.ok) {
+        const data = await response.json()
+        return data.available || false
+      }
+    } catch (error) {
+      console.error(`Error checking camera ${cameraIndex}:`, error)
+    }
+    return false
+  }
+
+  // Update external camera statuses periodically
+  useEffect(() => {
+    const checkExternalCameras = async () => {
+      const updatedStatuses = {}
+      for (const camera of cameraLocations) {
+        if (camera.isActive) {
+          // Main camera status is handled by existing modelStatus
+          updatedStatuses[camera.id] = modelStatus?.camera_status === 'connected' ? 'online' : 'offline'
+        } else {
+          // Check external cameras only
+          const isAvailable = await checkCameraAvailability(camera.cameraIndex)
+          updatedStatuses[camera.id] = isAvailable ? 'online' : 'offline'
+        }
+      }
+      console.log('Camera statuses:', updatedStatuses)
+    }
+
+    // Check camera statuses every 30 seconds
+    const interval = setInterval(checkExternalCameras, 30000)
+    
+    // Initial check after a delay to allow modelStatus to load
+    setTimeout(checkExternalCameras, 2000)
+
+    return () => clearInterval(interval)
+  }, [modelStatus])
+
+  return (
+    <div className="h-screen bg-gradient-to-br from-slate-50 to-slate-100 dark:from-neutral-900 dark:to-neutral-800 flex flex-col">
+      {/* Top Navigation Bar */}
+      <div className="bg-white dark:bg-neutral-800 border-b border-slate-200 dark:border-neutral-700 px-6 py-4 shadow-sm">
         <div className="flex items-center justify-between">
           <div className="flex items-center space-x-4">
-            <Link href="/">
-              <motion.button 
-                whileHover={{ scale: 1.05 }}
-                whileTap={{ scale: 0.95 }}
-                className="p-3 bg-gray-800/80 backdrop-blur-sm hover:bg-gray-700/80 rounded-full border border-gray-700/50 transition-all duration-300 hover:scale-110 group"
-              >
-                <Home size={20} className="text-white group-hover:text-blue-300 transition-colors" />
-              </motion.button>
-            </Link>
-            <h1 className="text-xl font-semibold text-white">CCTV Monitoring Dashboard</h1>
+            <Button 
+              variant="ghost" 
+              size="sm" 
+              className="text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-neutral-700 transition-all duration-200"
+              onClick={async () => {
+                await stopAllCameras()
+                window.location.href = '/'
+              }}
+            >
+              <IconArrowLeft className="w-4 h-4 mr-2" />
+              Back to Main
+            </Button>
+            <div className="h-6 w-px bg-slate-300 dark:bg-neutral-600" />
+            <h1 className="text-xl font-semibold text-slate-800 dark:text-slate-200 tracking-tight">
+              CCTV Monitoring Dashboard
+            </h1>
           </div>
-          <div className="flex items-center space-x-4">
-            {/* Backend Connection Status */}
-            <div className="flex items-center space-x-2 text-sm text-gray-300">
+          
+          {/* System Status */}
+          <div className="flex items-center space-x-6">
+            <div className="flex items-center space-x-2">
               {isConnected ? (
-                <Wifi className="w-4 h-4 text-green-400" />
+                <IconWifi className="w-4 h-4 text-emerald-500" />
               ) : (
-                <WifiOff className="w-4 h-4 text-red-400" />
+                <IconWifiOff className="w-4 h-4 text-red-500" />
               )}
-              <span className={isConnected ? 'text-green-300' : 'text-red-300'}>
+              <span className="text-sm font-medium text-slate-600 dark:text-slate-300">
                 {isConnected ? 'Connected' : 'Disconnected'}
               </span>
             </div>
-            
-            {/* Model Status */}
-            {modelStatus && (
-              <div className="flex items-center space-x-2 text-sm text-gray-300">
-                <div className={`w-2 h-2 rounded-full ${
-                  modelStatus.status === 'loaded' ? 'bg-green-500 animate-pulse' : 'bg-red-500'
-                }`}></div>
-                <span>{modelStatus.model_type} model {modelStatus.status}</span>
-              </div>
-            )}
-            
-            {/* Camera Status */}
-            <div className="flex items-center space-x-2 text-sm text-gray-300">
-              <div className={`w-2 h-2 rounded-full ${
-                modelStatus?.camera_status === 'connected' ? 'bg-green-500 animate-pulse' : 'bg-red-500'
-              }`}></div>
-              <span>Camera {modelStatus?.camera_status || 'unknown'}</span>
+            <div className="flex items-center space-x-2">
+              <IconCpu className={`w-4 h-4 ${modelStatus?.status === 'loaded' ? 'text-emerald-500' : 'text-red-500'}`} />
+              <span className="text-sm font-medium text-slate-600 dark:text-slate-300">
+                Model {modelStatus?.status === 'loaded' ? 'Loaded' : 'Loading'}
+              </span>
             </div>
-            <Link href="/">
-              <motion.button
-                whileHover={{ scale: 1.02, y: -2 }}
-                whileTap={{ scale: 0.98 }}
-                className="px-4 py-2 bg-gradient-to-r from-blue-500/20 via-purple-500/20 to-blue-600/20 backdrop-blur-sm border border-blue-400/30 text-blue-300 font-semibold rounded-lg hover:bg-gradient-to-r hover:from-blue-500/30 hover:via-purple-500/30 hover:to-blue-600/30 hover:border-blue-400/50 hover:text-white transition-all duration-500 shadow-lg hover:shadow-blue-500/25"
-              >
-                Back to Main
-              </motion.button>
-            </Link>
+            <div className="flex items-center space-x-2">
+              <IconCircleCheck className={`w-4 h-4 ${modelStatus?.camera_status === 'connected' ? 'text-emerald-500' : 'text-red-500'}`} />
+              <span className="text-sm font-medium text-slate-600 dark:text-slate-300">
+                Camera {modelStatus?.camera_status === 'connected' ? 'Online' : 'Offline'}
+              </span>
+            </div>
           </div>
         </div>
-      </header>
+      </div>
 
-      {/* Main Content */}
-      <div className="flex-1 flex overflow-hidden relative z-10">
-        {/* Left Side - Live Camera Feed */}
-        <div className="flex-1 flex flex-col p-6">
-          {/* Main Camera Feed */}
-          <motion.div
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            transition={{ duration: 0.5 }}
-            className="bg-gray-900/70 backdrop-blur-md rounded-lg shadow-lg border border-gray-700/50 overflow-hidden flex-1 mb-6"
-          >
-            {/* Camera Feed Header */}
-            <div className="bg-gray-800/60 backdrop-blur-sm px-4 py-3 border-b border-gray-700/30 flex items-center justify-between">
-              <div className="flex items-center space-x-3">
-                <Camera size={20} className="text-blue-400" />
-                <span className="font-medium text-white">Live Camera Feed</span>
-                <div className="flex items-center space-x-1">
-                  <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse"></div>
-                  <span className="text-xs text-red-300">LIVE</span>
-                </div>
-              </div>
-              <div className="flex items-center space-x-2">
-                <motion.button 
-                  whileHover={{ scale: 1.1 }}
-                  whileTap={{ scale: 0.9 }}
-                  onClick={() => setIsPlaying(!isPlaying)}
-                  className="p-2 hover:bg-gray-700/50 rounded transition-colors border border-gray-600/30"
-                >
-                  {isPlaying ? <Play size={16} className="text-gray-300" /> : <Eye size={16} className="text-gray-300" />}
-                </motion.button>
-                <motion.button 
-                  whileHover={{ scale: 1.1 }}
-                  whileTap={{ scale: 0.9 }}
-                  onClick={() => setIsAudioEnabled(!isAudioEnabled)}
-                  className="p-2 hover:bg-gray-700/50 rounded transition-colors border border-gray-600/30"
-                >
-                  {isAudioEnabled ? <Volume2 size={16} className="text-gray-300" /> : <VolumeX size={16} className="text-gray-300" />}
-                </motion.button>
-                <motion.button 
-                  whileHover={{ scale: 1.1 }}
-                  whileTap={{ scale: 0.9 }}
-                  className="p-2 hover:bg-gray-700/50 rounded transition-colors border border-gray-600/30"
-                >
-                  <MoreVertical size={16} className="text-gray-300" />
-                </motion.button>
-              </div>
-            </div>
-            
-            {/* Camera Feed Content */}
-            <div className="bg-black/80 backdrop-blur-sm aspect-video flex items-center justify-center relative border-t border-gray-700/30">
-              {streamError || !isConnected || modelStatus?.camera_status !== 'connected' ? (
-                <div className="text-center text-gray-300">
-                  <motion.div 
-                    animate={{ scale: [1, 1.05, 1] }}
-                    transition={{ repeat: Infinity, duration: 3 }}
-                    className="w-16 h-16 mx-auto mb-4 bg-gradient-to-br from-red-500/20 to-orange-500/20 backdrop-blur-sm rounded-full flex items-center justify-center border border-red-400/30"
-                  >
-                    <AlertTriangle className="w-8 h-8 text-red-400" />
-                  </motion.div>
-                  <p className="text-lg font-medium text-white">Camera Unavailable</p>
-                  <p className="text-sm opacity-60 text-gray-400">
-                    {!isConnected ? 'Backend disconnected' : 
-                     modelStatus?.camera_status !== 'connected' ? 'Camera not connected' : 
-                     'Stream error'}
-                  </p>
-                  {streamError && (
-                    <button 
-                      onClick={() => setStreamError(false)}
-                      className="mt-3 px-4 py-2 bg-blue-500/20 hover:bg-blue-500/30 border border-blue-400/30 text-blue-300 rounded-lg transition-all duration-200"
-                    >
-                      Retry Stream
-                    </button>
-                  )}
-                </div>
-              ) : (
-                <>
-                  {/* Actual Video Stream */}
-                  <img
-                    src="http://localhost:5000/stream"
-                    alt="Live Camera Feed"
-                    className="w-full h-full object-cover"
-                    onError={() => setStreamError(true)}
-                    onLoad={() => setStreamError(false)}
-                  />
-                  
-                  {/* Live indicator overlay */}
-                  <div className="absolute top-4 right-4 bg-red-600 text-white text-xs px-3 py-1 rounded-full border border-red-500/50 shadow-lg animate-pulse">
-                    ● LIVE
-                  </div>
-                  
-                  {/* Latest Alert Overlay */}
-                  {alerts.length > 0 && (
-                    <motion.div
-                      initial={{ opacity: 0, y: 20 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      className="absolute top-4 left-4 bg-red-600/90 backdrop-blur-sm text-white text-sm px-4 py-2 rounded-lg border border-red-500/50 shadow-lg"
-                    >
-                      <div className="flex items-center space-x-2">
-                        <AlertTriangle className="w-4 h-4" />
-                        <span className="font-semibold">ALERT</span>
-                      </div>
-                      <div className="text-xs mt-1 opacity-90">
-                        {alerts[0].weapon_type} detected
-                        {alerts[0].confidence && ` (${(alerts[0].confidence * 100).toFixed(1)}%)`}
-                      </div>
-                    </motion.div>
-                  )}
-                </>
-              )}
-            </div>
-          </motion.div>
 
-          {/* Camera Location Selector */}
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.5, delay: 0.2 }}
-            className="bg-gray-900/70 backdrop-blur-md rounded-lg shadow-lg border border-gray-700/50 p-4"
-          >
-            <h3 className="text-sm font-semibold text-white mb-3 flex items-center gap-2">
-              <Camera size={16} className="text-blue-400" />
-              Camera Locations
-            </h3>
-            <div className="grid grid-cols-5 gap-3">
-              {cameraLocations.map((camera) => (
-                <motion.button
-                  key={camera.id}
-                  whileHover={{ scale: 1.05 }}
-                  whileTap={{ scale: 0.95 }}
-                  onClick={() => setSelectedCamera(camera.id)}
-                  className={`aspect-square rounded-lg border-2 transition-all duration-200 backdrop-blur-sm ${
-                    selectedCamera === camera.id
-                      ? 'border-blue-500 bg-blue-500/20 shadow-lg shadow-blue-500/25'
-                      : 'border-gray-600/50 bg-gray-800/50 hover:border-gray-500/80 hover:bg-gray-700/50'
-                  }`}
-                >
-                  <div className="h-full flex flex-col items-center justify-center p-2">
-                    <div className={`w-8 h-8 rounded mb-2 flex items-center justify-center transition-colors ${
-                      selectedCamera === camera.id
-                        ? 'bg-blue-500/30 border border-blue-400/50'
-                        : 'bg-gray-700/50 border border-gray-600/30'
-                    }`}>
-                      <svg className={`w-4 h-4 ${
-                        selectedCamera === camera.id ? 'text-blue-300' : 'text-gray-400'
-                      }`} fill="currentColor" viewBox="0 0 20 20">
-                        <path fillRule="evenodd" d="M4 3a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V5a2 2 0 00-2-2H4zm12 12H4l4-8 3 6 2-4 3 6z" clipRule="evenodd" />
-                      </svg>
-                    </div>
-                    <span className={`text-xs font-medium text-center leading-tight transition-colors ${
-                      selectedCamera === camera.id ? 'text-blue-200' : 'text-gray-300'
-                    }`}>
-                      {camera.name}
-                    </span>
-                    <div className="flex items-center mt-1">
-                      <div className={`w-1.5 h-1.5 rounded-full ${
-                        camera.status === 'online' ? 'bg-green-400' : 'bg-red-400'
-                      }`}></div>
-                    </div>
-                  </div>
-                </motion.button>
-              ))}
-            </div>
-          </motion.div>
-        </div>
-
-        {/* Right Side - Alert Messages Panel */}
-        <motion.div
-          initial={{ opacity: 0, x: 50 }}
-          animate={{ opacity: 1, x: 0 }}
-          transition={{ duration: 0.5, delay: 0.1 }}
-          className="w-80 bg-gray-900/40 backdrop-blur-md border-l border-gray-700/50 p-6"
-        >
-          {/* Alert Panel Header */}
-          <div className="flex items-center space-x-2 mb-6">
+      {/* Main Layout */}
+      <div className="flex-1 flex">
+        {/* Main Content Area */}
+        <div className="flex-1 flex flex-col p-6 space-y-6">
+          {/* Camera Selection Message */}
+          {showCameraMessage && (
             <motion.div
-              animate={{ rotate: [0, 10, -10, 0] }}
-              transition={{ repeat: Infinity, duration: 2 }}
+              initial={{ opacity: 0, y: -20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              className="mb-4"
             >
-              <Bell size={20} className="text-red-400" />
+              <Alert className="bg-blue-50 dark:bg-blue-950 border-blue-200 dark:border-blue-800">
+                <IconAlertTriangle className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+                <AlertTitle className="text-blue-800 dark:text-blue-200">Camera Information</AlertTitle>
+                <AlertDescription className="text-blue-700 dark:text-blue-300">
+                  {showCameraMessage}
+                </AlertDescription>
+              </Alert>
             </motion.div>
-            <h2 className="text-lg font-semibold text-white">Alert Messages</h2>
-          </div>
+          )}
 
-          {/* Alert Panel Content */}
-          <div className="bg-gray-900/60 backdrop-blur-sm rounded-lg shadow-sm border border-gray-700/30 h-full overflow-hidden">
-            <div className="p-4 h-full flex flex-col">
-              {alerts.length === 0 ? (
-                <div className="flex-1 flex items-center justify-center text-center text-gray-400">
-                  <div>
-                    <motion.div
-                      animate={{ scale: [1, 1.1, 1] }}
-                      transition={{ repeat: Infinity, duration: 2.5 }}
-                    >
-                      <Bell size={48} className="mx-auto mb-4 opacity-40 text-gray-500" />
-                    </motion.div>
-                    <p className="text-sm text-gray-300">No alerts at this time</p>
-                    <p className="text-xs mt-1 opacity-70 text-gray-400">All systems monitoring normally</p>
-                    {detectionHistory.length > 0 && (
-                      <p className="text-xs mt-2 text-blue-300">
-                        {detectionHistory.length} past detections in history
+          {/* Live Camera Feed */}
+          <div className="flex-1 flex items-center justify-center">
+            <Card className="w-full max-w-6xl bg-white dark:bg-neutral-800 border border-slate-200 dark:border-neutral-700 shadow-xl overflow-hidden">
+              <div className="relative w-full" style={{ aspectRatio: '16/9' }}>
+                {streamError || !isConnected || modelStatus?.camera_status !== 'connected' ? (
+                  <div className="absolute inset-0 flex items-center justify-center bg-slate-900">
+                    <div className="text-center">
+                      <motion.div 
+                        animate={{ scale: [1, 1.05, 1] }}
+                        transition={{ repeat: Infinity, duration: 3 }}
+                        className="w-16 h-16 mx-auto mb-4 bg-red-500/20 rounded-full flex items-center justify-center"
+                      >
+                        <IconAlertTriangle className="w-8 h-8 text-red-400" />
+                      </motion.div>
+                      <p className="text-xl font-medium text-white">Camera Unavailable</p>
+                      <p className="text-slate-300 mt-2">
+                        {!isConnected ? 'Backend disconnected' : 
+                         modelStatus?.camera_status !== 'connected' ? 'Camera not connected' : 
+                         'Stream error'}
                       </p>
-                    )}
+                      {streamError && (
+                        <Button 
+                          onClick={() => setStreamError(false)}
+                          className="mt-4 bg-blue-500/20 hover:bg-blue-500/30 text-blue-300"
+                        >
+                          Retry Stream
+                        </Button>
+                      )}
+                    </div>
                   </div>
-                </div>
-              ) : (
-                <div className="flex-1 overflow-y-auto space-y-3 scrollbar-thin scrollbar-thumb-gray-600 scrollbar-track-transparent">
-                  {alerts.map((alert, index) => (
-                    <motion.div 
-                      key={index} 
-                      initial={{ opacity: 0, x: 20 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      transition={{ delay: index * 0.1 }}
-                      className="p-3 bg-red-500/10 backdrop-blur-sm border border-red-400/30 rounded-lg hover:bg-red-500/20 transition-colors group"
-                    >
-                      <div className="flex items-start space-x-2">
-                        <div className="w-2 h-2 bg-red-400 rounded-full mt-2 flex-shrink-0 animate-pulse"></div>
-                        <div className="flex-1">
-                          <div className="flex items-center justify-between">
-                            <p className="text-sm font-semibold text-red-200">
-                              {alert.weapon_type || 'Weapon'} Detected
-                            </p>
-                            {alert.confidence && (
-                              <span className="text-xs bg-red-500/20 text-red-300 px-2 py-1 rounded-full">
-                                {(alert.confidence * 100).toFixed(1)}%
-                              </span>
-                            )}
-                          </div>
-                          <p className="text-xs text-red-300 mt-1">{alert.message}</p>
-                          <div className="flex items-center justify-between mt-2">
-                            <p className="text-xs text-red-400/80">
-                              {new Date(alert.timestamp).toLocaleTimeString()}
-                            </p>
-                            {alert.screenshot && (
-                              <button 
-                                onClick={() => window.open(`http://localhost:5000${alert.screenshot}`, '_blank')}
-                                className="text-xs text-blue-300 hover:text-blue-200 underline opacity-0 group-hover:opacity-100 transition-opacity"
-                              >
-                                View Screenshot
-                              </button>
-                            )}
-                          </div>
+                ) : (
+                  <>
+                    <img
+                      src={isPaused ? '' : getActiveStreamUrl()}
+                      alt={`Live Feed - ${getActiveCameraName()}`}
+                      className="w-full h-full object-cover"
+                      style={{ display: isPaused ? 'none' : 'block' }}
+                      onError={() => setStreamError(true)}
+                      onLoad={() => setStreamError(false)}
+                    />
+                    
+                    {isPaused && (
+                      <div className="absolute inset-0 flex items-center justify-center bg-slate-900 bg-opacity-50">
+                        <div className="text-center">
+                          <motion.div
+                            animate={{ scale: [1, 1.1, 1] }}
+                            transition={{ repeat: Infinity, duration: 2 }}
+                          >
+                            <IconPlayerPlay size={80} className="mx-auto mb-4 text-white" />
+                          </motion.div>
+                          <p className="text-2xl font-medium text-white">Camera Paused</p>
+                          <p className="text-slate-300 mt-2">Click play to resume</p>
                         </div>
                       </div>
-                    </motion.div>
-                  ))}
-                </div>
-              )}
-              
-              {/* Alert Summary Footer */}
+                    )}
+                    
+                    {/* Camera Info Overlay */}
+                    <div className="absolute top-4 left-4">
+                      <div className="bg-black bg-opacity-70 backdrop-blur-sm px-4 py-2 rounded-lg">
+                        <h3 className="text-white font-semibold text-lg">{getActiveCameraName()}</h3>
+                        <p className="text-slate-300 text-sm">Live Feed • Camera Online</p>
+                      </div>
+                    </div>
+                    
+                    {/* Controls */}
+                    <div className="absolute bottom-4 right-4">
+                      <Button
+                        onClick={togglePause}
+                        size="lg"
+                        className={`bg-white bg-opacity-90 hover:bg-opacity-100 text-slate-800 border-none shadow-lg backdrop-blur-sm transition-all duration-200 ${
+                          isPaused ? 'hover:shadow-green-200' : 'hover:shadow-red-200'
+                        }`}
+                      >
+                        {isPaused ? (
+                          <IconPlayerPlay className="w-6 h-6 mr-2" />
+                        ) : (
+                          <IconPlayerPause className="w-6 h-6 mr-2" />
+                        )}
+                        {isPaused ? 'Resume' : 'Pause'}
+                      </Button>
+                    </div>
+
+                    {/* Alert Overlay */}
+                    {alerts.length > 0 && (
+                      <motion.div
+                        initial={{ opacity: 0, y: -20 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        className="absolute top-4 right-4"
+                      >
+                        <Alert variant="destructive" className="bg-red-500 bg-opacity-90 backdrop-blur-sm text-white border-red-400">
+                          <IconAlertTriangle className="h-4 w-4" />
+                          <AlertTitle className="text-white">Weapon Detected!</AlertTitle>
+                          <AlertDescription className="text-red-100">
+                            {alerts[0].weapon_type} detected {alerts[0].confidence && `(${(alerts[0].confidence * 100).toFixed(1)}%)`}
+                          </AlertDescription>
+                        </Alert>
+                      </motion.div>
+                    )}
+                  </>
+                )}
+              </div>
+            </Card>
+          </div>
+
+          
+          {/* Camera Locations Grid */}
+          <div className="h-36">
+            <h2 className="text-lg font-semibold text-slate-800 dark:text-slate-200 mb-3">Camera Locations</h2>
+            <div className="grid grid-cols-5 gap-3 h-24">
+              {cameraLocations.map((camera) => {
+                const isActive = camera.id === selectedCamera
+                const isOnline = camera.status === 'online'
+                
+                return (
+                  <motion.div
+                    key={camera.id}
+                    onClick={() => handleCameraSelect(camera.id)}
+                    className={`relative cursor-pointer rounded-xl overflow-hidden transition-all duration-300 group ${
+                      isActive 
+                        ? 'ring-2 ring-blue-500 shadow-xl shadow-blue-100 dark:shadow-blue-900/20 scale-105' 
+                        : 'hover:shadow-lg hover:scale-102'
+                    }`}
+                    whileHover={{ y: -2 }}
+                    whileTap={{ scale: 0.98 }}
+                  >
+                    <Card className="h-full bg-white dark:bg-neutral-800 border border-slate-200 dark:border-neutral-700">
+                      <div className="relative h-full">
+                        <img
+                          src={camera.streamUrl}
+                          alt={camera.name}
+                          className="w-full h-full object-cover"
+                          onError={(e) => {
+                            e.currentTarget.src = `/placeholder.svg?height=120&width=200&text=Camera ${camera.id.split('-')[0]}`
+                          }}
+                        />
+                        
+                        {/* Status Indicator */}
+                        <div className="absolute top-1 right-1">
+                          <div className={`w-2 h-2 rounded-full ${
+                            isOnline ? 'bg-emerald-500 animate-pulse' : 'bg-red-500'
+                          } shadow-md`} />
+                        </div>
+                        
+                        {/* Camera Info Overlay */}
+                        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black via-black/50 to-transparent p-2">
+                          <p className="text-white font-medium text-xs truncate">{camera.name}</p>
+                          <p className="text-slate-300 text-[10px]">
+                            {isOnline ? 'Online' : 'Offline'} • {camera.lastUpdate}
+                          </p>
+                        </div>
+                        
+                        {/* Active Indicator */}
+                        {isActive && (
+                          <div className="absolute inset-0 bg-blue-500 bg-opacity-10 flex items-center justify-center">
+                            <div className="bg-blue-500 text-white px-1 py-0.5 rounded text-[10px] font-medium">
+                              ACTIVE
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </Card>
+                  </motion.div>
+                )
+              })}
+            </div>
+          </div>
+        </div>
+
+
+        {/* Right Alerts Panel */}
+        <div className="w-80 bg-white dark:bg-neutral-800 border-l border-slate-200 dark:border-neutral-700 flex flex-col">
+          <div className="p-6 border-b border-slate-200 dark:border-neutral-700">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-semibold text-slate-800 dark:text-slate-200">Detection Alerts</h2>
               {alerts.length > 0 && (
-                <div className="mt-4 pt-3 border-t border-gray-700/30">
-                  <div className="text-center">
-                    <p className="text-xs text-gray-400">
-                      {alerts.length} active alert{alerts.length !== 1 ? 's' : ''}
-                    </p>
-                  </div>
-                </div>
+                <Badge variant="destructive" className="bg-red-500 text-white animate-pulse">
+                  {alerts.length}
+                </Badge>
               )}
             </div>
           </div>
-        </motion.div>
+          
+          <ScrollArea className="flex-1 p-6">
+            <div className="space-y-4">
+              {alerts.length === 0 ? (
+                <div className="text-center py-12">
+                  <IconBellRinging className="w-12 h-12 text-slate-300 dark:text-slate-600 mx-auto mb-4" />
+                  <p className="text-slate-500 dark:text-slate-400 font-medium">No Recent Alerts</p>
+                  <p className="text-slate-400 dark:text-slate-500 text-sm mt-1">System monitoring active</p>
+                  {detectionHistory.length > 0 && (
+                    <p className="text-xs mt-2 text-blue-300">
+                      {detectionHistory.length} past detections in history
+                    </p>
+                  )}
+                </div>
+              ) : (
+                alerts.map((alert, index) => (
+                  <motion.div
+                    key={index}
+                    initial={{ opacity: 0, x: 20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ duration: 0.3, delay: index * 0.1 }}
+                    className="bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-800 rounded-lg p-4 hover:shadow-md transition-all duration-200"
+                  >
+                    <div className="flex items-start justify-between">
+                      <div className="flex-1">
+                        <div className="flex items-center space-x-2 mb-2">
+                          <IconAlertTriangle className="w-4 h-4 text-red-600 dark:text-red-400" />
+                          <h3 className="font-semibold text-red-700 dark:text-red-300 text-sm">
+                            {alert.weapon_type || 'Weapon'} Detected
+                          </h3>
+                          {alert.confidence && (
+                            <Badge variant="outline" className="text-xs bg-red-500/20 text-red-600 border-red-300">
+                              {(alert.confidence * 100).toFixed(1)}%
+                            </Badge>
+                          )}
+                        </div>
+                        <p className="text-slate-600 dark:text-slate-300 text-sm mb-2">
+                          {alert.message || "Potential threat detected in camera feed"}
+                        </p>
+                        <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
+                          <span>{new Date(alert.timestamp).toLocaleTimeString()}</span>
+                          {alert.screenshot && (
+                            <button 
+                              onClick={() => window.open(`http://localhost:5000${alert.screenshot}`, '_blank')}
+                              className="text-blue-500 hover:text-blue-600 underline"
+                            >
+                              View Screenshot
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                      <Button variant="ghost" size="sm" className="text-slate-400 hover:text-slate-600">
+                        <IconDots className="w-4 h-4" />
+                      </Button>
+                    </div>
+                  </motion.div>
+                ))
+              )}
+            </div>
+          </ScrollArea>
+        </div>
       </div>
     </div>
   )
