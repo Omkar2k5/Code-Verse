@@ -4,9 +4,7 @@ import { motion, useScroll, useTransform } from "framer-motion";
 import {
   Play,
   Camera,
-  Map,
   Cloud,
-  BarChart3,
   Monitor,
   ArrowRight,
   Bell,
@@ -356,16 +354,20 @@ export default function WorkingPage() {
           transition={{ duration: 0.8, delay: 1.4 }}
           className="relative bg-gray-900/90 backdrop-blur-xl rounded-3xl p-8 border border-gray-700/40 hover:border-blue-400/60 transition-all duration-500 shadow-2xl mb-8"
         >
+          {/* Glowing background effect */}
           <div className="absolute inset-0 bg-gradient-to-br from-blue-500/5 to-purple-500/5 rounded-3xl" />
           <h2 className="text-2xl font-bold text-center mb-8 text-blue-400">Key Technical Features</h2>
 
+          {/* Infinite Scrolling Features */}
           <div className="space-y-8">
+            {/* First Row - Moving Left to Right */}
             <div className="relative overflow-hidden">
               <motion.div
                 className="flex space-x-6"
                 animate={{ x: [0, -1000] }}
                 transition={{ duration: 20, repeat: Infinity, ease: "linear" }}
               >
+                {/* Repeat the features 3 times for seamless loop */}
                 {[...Array(3)].map((_, repeatIndex) => (
                   <div key={`row1-${repeatIndex}`} className="flex space-x-6">
                     {[
@@ -378,6 +380,7 @@ export default function WorkingPage() {
                         className="relative bg-gray-800/50 backdrop-blur-sm rounded-2xl p-6 border border-gray-700/40 hover:border-blue-400/60 transition-all duration-300 shadow-lg min-w-[280px]"
                         whileHover={{ scale: 1.05, boxShadow: "0 20px 40px -12px rgba(0, 0, 0, 0.4)" }}
                       >
+                        {/* Glowing background effect */}
                         <div className={`absolute inset-0 bg-gradient-to-br ${feature.color} opacity-5 rounded-2xl`} />
                         <div className="relative">
                           <div className="flex items-center mb-4">
@@ -395,12 +398,14 @@ export default function WorkingPage() {
               </motion.div>
             </div>
 
+            {/* Second Row - Moving Right to Left */}
             <div className="relative overflow-hidden">
               <motion.div
                 className="flex space-x-6"
                 animate={{ x: [-1000, 0] }}
                 transition={{ duration: 25, repeat: Infinity, ease: "linear" }}
               >
+                {/* Repeat the features 3 times for seamless loop */}
                 {[...Array(3)].map((_, repeatIndex) => (
                   <div key={`row2-${repeatIndex}`} className="flex space-x-6">
                     {[
@@ -413,6 +418,7 @@ export default function WorkingPage() {
                         className="relative bg-gray-800/50 backdrop-blur-sm rounded-2xl p-6 border border-gray-700/40 hover:border-blue-400/60 transition-all duration-300 shadow-lg min-w-[280px]"
                         whileHover={{ scale: 1.05, boxShadow: "0 20px 40px -12px rgba(0, 0, 0, 0.4)" }}
                       >
+                        {/* Glowing background effect */}
                         <div className={`absolute inset-0 bg-gradient-to-br ${feature.color} opacity-5 rounded-2xl`} />
                         <div className="relative">
                           <div className="flex items-center mb-4">
