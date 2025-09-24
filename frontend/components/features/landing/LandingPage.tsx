@@ -16,51 +16,52 @@ import { HorizontalSlides, SplitText } from "@/components/common";
 export default function LandingPage() {
   const problemSlides = [
     {
-      id: "scale",
-      title: "Massive Scale Events",
+      id: "threats",
+      title: "Rising Threats",
       description:
-        "India hosts the world's largest gatherings with millions of people. From Kumbh Mela attracting over 100 million devotees to religious festivals drawing massive crowds, the scale is unprecedented.",
-      icon: <Users size={48} className="text-white" />,
-      stats: [
-        { label: "People at Kumbh Mela", value: "100M+" },
-        { label: "Major Festivals Annually", value: "500+" },
-        { label: "Average Crowd Size", value: "50K+" },
-      ],
-    },
-    {
-      id: "incidents",
-      title: "Tragic Consequences",
-      description:
-        "Poor crowd management leads to devastating stampedes and casualties. Traditional manual monitoring fails to prevent disasters, resulting in loss of precious lives.",
+        "Weapon-related crimes are rising across public spaces, schools, religious gatherings, and transportation hubs. India reports 20K+ such incidents annually, while globally schools have faced 100+ shooting incidents in the last decade. Legacy CCTV systems detect <5% of events in real time.",
       icon: <AlertTriangle size={48} className="text-white" />,
       stats: [
-        { label: "Lives Lost Annually", value: "200+" },
-        { label: "Major Stampedes (2000-2023)", value: "50+" },
-        { label: "Average Response Time", value: "15min" },
+        { label: "Weapon crimes in India annually", value: "20K+" },
+        { label: "School shootings globally (last decade)", value: "100+" },
+        { label: "Real-time detection in legacy CCTV", value: "<5%" },
       ],
     },
     {
-      id: "challenges",
-      title: "Current Limitations",
+      id: "consequences",
+      title: "Tragic Consequences",
       description:
-        "Manual observation, delayed responses, and lack of real-time data create dangerous situations. Security personnel cannot monitor vast areas effectively or predict crowd behavior patterns.",
+        "Delayed detection escalates situations into violence, loss of lives, and public panic. Slow manual monitoring and late police intervention compound the damage.",
       icon: <Clock size={48} className="text-white" />,
       stats: [
-        { label: "Detection Delay", value: "10-15min" },
-        { label: "Coverage Area per Guard", value: "Limited" },
-        { label: "Prediction Accuracy", value: "Poor" },
+        { label: "Lives lost annually worldwide in public gatherings", value: "1000+" },
+        { label: "Avg police response time", value: "10+ min" },
+        { label: "Economic & social losses", value: "Billions" },
+      ],
+    },
+    {
+      id: "limitations",
+      title: "Current Limitations",
+      description:
+        "Existing surveillance relies on manual observation with minimal automation, making it impossible to scale across hundreds of cameras or predict threats before they occur.",
+      icon: <Users size={48} className="text-white" />,
+      stats: [
+        { label: "Detection delay with manual monitoring", value: "10–15 min" },
+        { label: "Effective screens per guard", value: "4–5" },
+        { label: "Predictive alerting in legacy systems", value: "None" },
       ],
     },
     {
       id: "solution",
-      title: "AI-Powered Solution",
+      title: "AI-Powered Solution (SafeVision)",
       description:
-        "SafeVision revolutionizes crowd management with real-time AI detection, instant alerts, and predictive analytics. Our system monitors vast areas simultaneously and prevents disasters before they occur.",
+        "SafeVision provides real-time weapon detection, automated escalation, and predictive analytics. It analyzes live CCTV/IP feeds, identifies weapons instantly, alerts security teams, and escalates to nearby police stations with geo-precision and annotated snapshots.",
       icon: <Users2 size={48} className="text-white" />,
       stats: [
-        { label: "Detection Time", value: "<1sec" },
-        { label: "Coverage Area", value: "Unlimited" },
-        { label: "Prediction Accuracy", value: "95%+" },
+        { label: "Detection time (YOLOv8)", value: "<1 sec" },
+        { label: "Detection accuracy", value: "95%+" },
+        { label: "Geo-aware escalation (SMS/Email/API)", value: "Instant" },
+        { label: "Coverage", value: "Unlimited (Cloud/Kubernetes)" },
       ],
     },
   ];

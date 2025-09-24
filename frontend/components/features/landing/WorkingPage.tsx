@@ -37,6 +37,7 @@ export default function WorkingPage() {
     return () => window.removeEventListener("resize", handleResize);
   }, []);
 
+  // Weapon Detection pipeline steps
   const workflowSteps = [
     {
       icon: Camera,
@@ -354,7 +355,6 @@ export default function WorkingPage() {
           transition={{ duration: 0.8, delay: 1.4 }}
           className="relative bg-gray-900/90 backdrop-blur-xl rounded-3xl p-8 border border-gray-700/40 hover:border-blue-400/60 transition-all duration-500 shadow-2xl mb-8"
         >
-          {/* Glowing background effect */}
           <div className="absolute inset-0 bg-gradient-to-br from-blue-500/5 to-purple-500/5 rounded-3xl" />
           <h2 className="text-2xl font-bold text-center mb-8 text-blue-400">Key Technical Features</h2>
 
