@@ -1,0 +1,15 @@
+# gun_datasets/data.yaml
+
+# Root dataset folder
+path: datasets/gun_datasets
+
+# Train/val image folders
+
+
+
+# datasets/gun_datasets/data.yaml
+train: train
+val: valid
+nc: 1
+names: ["gun"]
+
