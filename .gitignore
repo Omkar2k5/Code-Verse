@@ -1,0 +1,160 @@
+# Root .gitignore for Code-Verse monorepo
+# - Cleans up invalid entries and typos
+# - Consolidates Node/Next.js, Python, and common artifacts across frontend, backend, and ml
+
+# -----------------------------------------------------------------------------
+# OS / Editor junk
+# -----------------------------------------------------------------------------
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*.bak
+*.tmp
+*.temp
+*.orig
+
+# IDE / Editor
+.vscode/
+.idea/
+*.code-workspace
+
+# -----------------------------------------------------------------------------
+# Environment files
+# -----------------------------------------------------------------------------
+.env
+.env.*
+!**/.env.example
+
+# -----------------------------------------------------------------------------
+# Logs
+# -----------------------------------------------------------------------------
+*.log
+logs/
+**/npm-debug.log*
+**/yarn-debug.log*
+**/yarn-error.log*
+**/.pnpm-debug.log*
+
+# -----------------------------------------------------------------------------
+# Node / Next.js (root and packages)
+# -----------------------------------------------------------------------------
+node_modules/
+**/node_modules/
+.pnp
+.pnp.js
+
+# Next.js build outputs
+**/.next/
+**/out/
+**/build/
+**/.vercel/
+**/*.tsbuildinfo
+**/next-env.d.ts
+
+# Coverage
+coverage/
+**/coverage/
+
+# -----------------------------------------------------------------------------
+# Python (backend, ml)
+# -----------------------------------------------------------------------------
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+build/
+develop-eggs/
+dist/
+downloads/
+egss/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+pip-wheel-metadata/
+
+.venv/
+venv/
+ENV/
+env/
+.ipynb_checkpoints/
+.pytest_cache/
+.mypy_cache/
+.pytype/
+.pyre/
+.coverage*
+coverage.xml
+htmlcov/
+
+# -----------------------------------------------------------------------------
+# Backend specific: models, data, large binaries
+# -----------------------------------------------------------------------------
+backend/checkpoints/
+backend/exported_models/
+backend/web_export_models/
+backend/outputs/
+backend/data/video/
+backend/outputs/op_*.mp4
+
+# Model / weight formats
+backend/**/*.weights
+backend/**/*_weights.npy
+backend/**/*.pt
+backend/**/*.onnx
+backend/**/*.torchscript
+backend/**/*.npy
+backend/**/*.pb
+
+# Video formats in backend
+backend/**/*.mp4
+backend/**/*.avi
+backend/**/*.mkv
+backend/**/*.mov
+backend/**/*.wmv
+backend/**/*.flv
+
+# OS files inside backend
+backend/.DS_Store
+backend/Thumbs.db
+
+# -----------------------------------------------------------------------------
+# Frontend specific (explicit, though covered by generic Node/Next rules above)
+# -----------------------------------------------------------------------------
+frontend/.next/
+frontend/out/
+frontend/build/
+frontend/.vercel/
+frontend/*.tsbuildinfo
+frontend/next-env.d.ts
+frontend/node_modules/
+frontend/npm-debug.log*
+frontend/yarn-debug.log*
+frontend/yarn-error.log*
+frontend/.pnpm-debug.log*
+frontend/.env.local
+frontend/.env.*.local
+
+# -----------------------------------------------------------------------------
+# ML workspace (optional)
+# -----------------------------------------------------------------------------
+ml/__pycache__/
+ml/.ipynb_checkpoints/
+ml/venv/
+ml/.venv/
+ml/**/*.pt
+ml/**/*.onnx
+ml/**/*.npy
+ml/**/*.pb
+ml/**/*.weights
