@@ -55,7 +55,7 @@ export default function LandingPage() {
       id: "solution",
       title: "AI-Powered Solution",
       description:
-        "Drishti revolutionizes crowd management with real-time AI detection, instant alerts, and predictive analytics. Our system monitors vast areas simultaneously and prevents disasters before they occur.",
+        "SafeVision revolutionizes crowd management with real-time AI detection, instant alerts, and predictive analytics. Our system monitors vast areas simultaneously and prevents disasters before they occur.",
       icon: <Users2 size={48} className="text-white" />,
       stats: [
         { label: "Detection Time", value: "<1sec" },
@@ -92,7 +92,7 @@ export default function LandingPage() {
           <div className="w-full max-w-7xl px-6 lg:px-8 text-center">
             <div className="mb-6">
               <SplitText
-                text="Drishti"
+                text="SafeVision"
                 className="text-6xl md:text-8xl font-bold text-blue-400"
                 splitType="chars"
                 delay={150}
@@ -105,7 +105,7 @@ export default function LandingPage() {
             </div>
             <div className="max-w-3xl mx-auto mb-8">
               <SplitText
-                text="Revolutionizing crowd management in India through real-time AI detection, intelligent analysis, and proactive safety measures"
+                text="SafeVision is an AI-powered real-time weapon detection and emergency escalation system designed to enhance public safety. By analyzing live CCTV/IP camera feeds, the system identifies weapons instantly, sends alerts to security teams, and escalates emergencies to nearby police stations with precise location and annotated snapshots. This ensures faster response times, reduced risks, and safer communities."
                 className="text-xl md:text-2xl text-gray-300 leading-relaxed"
                 splitType="words"
                 delay={80}

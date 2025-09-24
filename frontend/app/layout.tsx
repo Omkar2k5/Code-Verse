@@ -24,7 +24,7 @@ export default function RootLayout({
       <head>
         <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
         <link rel="icon" href="/icon.svg" type="image/svg+xml" />
-        <meta name="description" content="Advanced Crowd Detection and Surveillance Dashboard" />
+        <meta name="description" content="SafeVision – AI-powered real-time weapon detection and emergency escalation for public safety. Analyzes live CCTV/IP feeds, sends alerts, and escalates to nearby police with location and annotated snapshots." />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
       </head>
       <body>

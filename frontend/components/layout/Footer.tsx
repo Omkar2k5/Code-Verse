@@ -6,7 +6,7 @@ export default function Footer() {
           {/* Project Info - Left Side */}
           <div className="text-left">
             <h3 className="text-xl font-bold bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent mb-2">
-              Drishti
+              SafeVision
             </h3>
             <p className="text-gray-400">
               Real-Time Crowd Understanding for Intelligent Safety
