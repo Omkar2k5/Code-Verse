@@ -51,12 +51,20 @@ export default function DashboardPage() {
   const [modelStatus, setModelStatus] = useState<any>(null)
   const [detectionHistory, setDetectionHistory] = useState<Detection[]>([])
   const [showCameraMessage, setShowCameraMessage] = useState('')
+  const [currentDetections, setCurrentDetections] = useState<any[]>([])
   const socketRef = useRef<Socket | null>(null)
 
   // Initialize backend connections
   useEffect(() => {
-    // Initialize Socket.IO connection
-    const socket = io("http://localhost:5000")
+    // Initialize Socket.IO connection with environment variable
+    const socketUrl = process.env.NEXT_PUBLIC_SOCKET_URL || "http://localhost:5000"
+    const socket = io(socketUrl, {
+      autoConnect: true,
+      reconnection: true,
+      reconnectionAttempts: 5,
+      reconnectionDelay: 1000,
+      timeout: 20000
+    })
     socketRef.current = socket
     
     socket.on("connect", () => {
@@ -70,8 +78,18 @@ export default function DashboardPage() {
     })
     
     socket.on("detection", (data: Alert) => {
-      console.log("New detection:", data)
+      console.log("New detection alert:", data)
       setAlerts((prev) => [data, ...prev.slice(0, 9)]) // Keep last 10 alerts
+    })
+    
+    socket.on("detection_result", (data: any) => {
+      console.log("Detection result:", data)
+      setCurrentDetections([data]) // Update current detection for overlay
+      
+      // Clear detection after 3 seconds
+      setTimeout(() => {
+        setCurrentDetections([])
+      }, 3000)
     })
     
     socket.on("connect_error", (error) => {
@@ -88,17 +106,19 @@ export default function DashboardPage() {
 
   // Fetch initial data and initialize cameras
   useEffect(() => {
+    const apiBase = process.env.NEXT_PUBLIC_WEAPON_API_BASE || "http://localhost:5000/api"
+    
     const fetchInitialData = async () => {
       try {
         // Fetch model status
-        const modelResponse = await fetch('http://localhost:5000/api/model-status')
+        const modelResponse = await fetch(`${apiBase}/model-status`)
         if (modelResponse.ok) {
           const modelData = await modelResponse.json()
           setModelStatus(modelData)
         }
         
         // Fetch detection history
-        const historyResponse = await fetch('http://localhost:5000/api/history')
+        const historyResponse = await fetch(`${apiBase}/history`)
         if (historyResponse.ok) {
           const historyData = await historyResponse.json()
           setDetectionHistory(historyData.detections || [])
@@ -135,13 +155,15 @@ export default function DashboardPage() {
     }
   }, [])
 
+  const streamBase = process.env.NEXT_PUBLIC_STREAM_BASE_URL || "http://localhost:5000/stream"
+  
   const cameraLocations = [
     {
       id: 'main-entrance',
       name: 'Main Entrance',
       status: modelStatus?.camera_status === 'connected' ? 'online' : 'offline',
       lastUpdate: '2 min ago',
-      streamUrl: 'http://localhost:5000/stream', // Main working camera
+      streamUrl: streamBase, // Main working camera
       cameraIndex: 0,
       isActive: true
     },
@@ -150,7 +172,7 @@ export default function DashboardPage() {
       name: 'Parking Lot',
       status: 'offline',
       lastUpdate: '1 min ago',
-      streamUrl: 'http://localhost:5000/stream/1', // Future external camera
+      streamUrl: `${streamBase}/1`, // Future external camera
       cameraIndex: 1,
       isActive: false
     },
@@ -159,7 +181,7 @@ export default function DashboardPage() {
       name: 'Side Entrance',
       status: 'offline',
       lastUpdate: '15 min ago',
-      streamUrl: 'http://localhost:5000/stream/2', // Future external camera
+      streamUrl: `${streamBase}/2`, // Future external camera
       cameraIndex: 2,
       isActive: false
     },
@@ -168,17 +190,8 @@ export default function DashboardPage() {
       name: 'Lobby',
       status: 'offline',
       lastUpdate: '30 sec ago',
-      streamUrl: 'http://localhost:5000/stream/3', // Future external camera
+      streamUrl: `${streamBase}/3`, // Future external camera
       cameraIndex: 3,
-      isActive: false
-    },
-    {
-      id: 'cafeteria',
-      name: 'Cafeteria',
-      status: 'offline',
-      lastUpdate: '5 min ago',
-      streamUrl: 'http://localhost:5000/stream/4', // Future external camera
-      cameraIndex: 4,
       isActive: false
     }
   ]
@@ -215,11 +228,13 @@ export default function DashboardPage() {
 
   const stopAllCameras = async () => {
     console.log('Stopping external cameras...')
+    const apiBase = process.env.NEXT_PUBLIC_WEAPON_API_BASE || "http://localhost:5000/api"
+    
     try {
       // Stop only external cameras (not the main active camera)
       for (const camera of cameraLocations) {
         if (!camera.isActive) {
-          await fetch(`http://localhost:5000/api/camera/stop/${camera.cameraIndex}`, {
+          await fetch(`${apiBase}/camera/stop/${camera.cameraIndex}`, {
             method: 'POST'
           })
         }
@@ -232,8 +247,10 @@ export default function DashboardPage() {
   }
 
   const initializeCamera = async (cameraIndex: number) => {
+    const apiBase = process.env.NEXT_PUBLIC_WEAPON_API_BASE || "http://localhost:5000/api"
+    
     try {
-      const response = await fetch(`http://localhost:5000/api/camera/initialize/${cameraIndex}`, {
+      const response = await fetch(`${apiBase}/camera/initialize/${cameraIndex}`, {
         method: 'POST'
       })
       
@@ -251,8 +268,10 @@ export default function DashboardPage() {
   }
 
   const checkCameraAvailability = async (cameraIndex: number) => {
+    const apiBase = process.env.NEXT_PUBLIC_WEAPON_API_BASE || "http://localhost:5000/api"
+    
     try {
-      const response = await fetch(`http://localhost:5000/api/camera/check/${cameraIndex}`)
+      const response = await fetch(`${apiBase}/camera/check/${cameraIndex}`)
       if (response.ok) {
         const data = await response.json()
         return data.available || false
@@ -263,28 +282,19 @@ export default function DashboardPage() {
     return false
   }
 
-  // Update external camera statuses periodically
+  // Update external camera statuses periodically (reduced frequency)
   useEffect(() => {
     const checkExternalCameras = async () => {
-      const updatedStatuses = {}
-      for (const camera of cameraLocations) {
-        if (camera.isActive) {
-          // Main camera status is handled by existing modelStatus
-          updatedStatuses[camera.id] = modelStatus?.camera_status === 'connected' ? 'online' : 'offline'
-        } else {
-          // Check external cameras only
-          const isAvailable = await checkCameraAvailability(camera.cameraIndex)
-          updatedStatuses[camera.id] = isAvailable ? 'online' : 'offline'
-        }
-      }
-      console.log('Camera statuses:', updatedStatuses)
+      // Only check main camera status, assume external cameras are offline
+      // This prevents spam of OpenCV errors for non-existent cameras
+      console.log('Camera status check: Main camera active, external cameras offline')
     }
 
-    // Check camera statuses every 30 seconds
-    const interval = setInterval(checkExternalCameras, 30000)
+    // Check camera statuses every 60 seconds (reduced frequency)
+    const interval = setInterval(checkExternalCameras, 60000)
     
-    // Initial check after a delay to allow modelStatus to load
-    setTimeout(checkExternalCameras, 2000)
+    // Initial check after a delay
+    setTimeout(checkExternalCameras, 5000)
 
     return () => clearInterval(interval)
   }, [modelStatus])
@@ -343,9 +353,10 @@ export default function DashboardPage() {
 
 
       {/* Main Layout */}
-      <div className="flex-1 flex">
-        {/* Main Content Area */}
-        <div className="flex-1 flex flex-col p-6 space-y-6">
+      <div className="flex-1 flex overflow-hidden">
+        {/* Main Content Area with Scrolling */}
+        <ScrollArea className="flex-1">
+          <div className="flex flex-col p-6 space-y-6 min-h-full pb-8">
           {/* Camera Selection Message */}
           {showCameraMessage && (
             <motion.div
@@ -365,8 +376,8 @@ export default function DashboardPage() {
           )}
 
           {/* Live Camera Feed */}
-          <div className="flex-1 flex items-center justify-center">
-            <Card className="w-full max-w-6xl bg-white dark:bg-neutral-800 border border-slate-200 dark:border-neutral-700 shadow-xl overflow-hidden">
+          <div className="flex-1 flex items-center justify-center mb-6">
+            <Card className="w-full max-w-7xl bg-white dark:bg-neutral-800 border border-slate-200 dark:border-neutral-700 shadow-xl overflow-hidden">
               <div className="relative w-full" style={{ aspectRatio: '16/9' }}>
                 {streamError || !isConnected || modelStatus?.camera_status !== 'connected' ? (
                   <div className="absolute inset-0 flex items-center justify-center bg-slate-900">
@@ -420,11 +431,47 @@ export default function DashboardPage() {
                       </div>
                     )}
                     
+                    {/* Detection Overlays - Bounding Boxes */}
+                    {currentDetections.length > 0 && currentDetections.map((detection, index) => {
+                      if (!detection.bbox) return null;
+                      
+                      const [x, y, width, height] = detection.bbox;
+                      const isWeapon = detection.is_weapon;
+                      
+                      return (
+                        <div
+                          key={index}
+                          className="absolute border-2 rounded-lg pointer-events-none"
+                          style={{
+                            left: `${(x / 640) * 100}%`,
+                            top: `${(y / 480) * 100}%`,
+                            width: `${(width / 640) * 100}%`,
+                            height: `${(height / 480) * 100}%`,
+                            borderColor: isWeapon ? '#ef4444' : '#22c55e',
+                            backgroundColor: isWeapon ? 'rgba(239, 68, 68, 0.1)' : 'rgba(34, 197, 85, 0.1)',
+                          }}
+                        >
+                          <div 
+                            className={`absolute -top-6 left-0 px-2 py-1 rounded text-xs font-semibold ${
+                              isWeapon ? 'bg-red-500 text-white' : 'bg-green-500 text-white'
+                            }`}
+                          >
+                            {detection.class_name}: {(detection.confidence * 100).toFixed(1)}%
+                          </div>
+                        </div>
+                      );
+                    })}
+                    
                     {/* Camera Info Overlay */}
                     <div className="absolute top-4 left-4">
                       <div className="bg-black bg-opacity-70 backdrop-blur-sm px-4 py-2 rounded-lg">
                         <h3 className="text-white font-semibold text-lg">{getActiveCameraName()}</h3>
                         <p className="text-slate-300 text-sm">Live Feed • Camera Online</p>
+                        {currentDetections.length > 0 && (
+                          <p className="text-yellow-300 text-xs mt-1">
+                            🎯 Detecting: {currentDetections[0]?.class_name}
+                          </p>
+                        )}
                       </div>
                     </div>
                     
@@ -470,9 +517,9 @@ export default function DashboardPage() {
 
           
           {/* Camera Locations Grid */}
-          <div className="h-36">
+          <div className="h-40">
             <h2 className="text-lg font-semibold text-slate-800 dark:text-slate-200 mb-3">Camera Locations</h2>
-            <div className="grid grid-cols-5 gap-3 h-24">
+            <div className="grid grid-cols-4 gap-4 h-28">
               {cameraLocations.map((camera) => {
                 const isActive = camera.id === selectedCamera
                 const isOnline = camera.status === 'online'
@@ -489,36 +536,38 @@ export default function DashboardPage() {
                     whileHover={{ y: -2 }}
                     whileTap={{ scale: 0.98 }}
                   >
-                    <Card className="h-full bg-white dark:bg-neutral-800 border border-slate-200 dark:border-neutral-700">
-                      <div className="relative h-full">
-                        <img
-                          src={camera.streamUrl}
-                          alt={camera.name}
-                          className="w-full h-full object-cover"
-                          onError={(e) => {
-                            e.currentTarget.src = `/placeholder.svg?height=120&width=200&text=Camera ${camera.id.split('-')[0]}`
-                          }}
-                        />
+                    <Card className="h-full bg-white dark:bg-neutral-800 border border-slate-200 dark:border-neutral-700 overflow-hidden">
+                      <div className="relative w-full h-full">
+                        <div className="aspect-video w-full h-full">
+                          <img
+                            src={camera.streamUrl}
+                            alt={camera.name}
+                            className="w-full h-full object-cover"
+                            onError={(e) => {
+                              e.currentTarget.src = `/placeholder.svg?height=90&width=160&text=Camera ${camera.id.split('-')[0]}`
+                            }}
+                          />
+                        </div>
                         
                         {/* Status Indicator */}
-                        <div className="absolute top-1 right-1">
-                          <div className={`w-2 h-2 rounded-full ${
+                        <div className="absolute top-2 right-2">
+                          <div className={`w-2.5 h-2.5 rounded-full ${
                             isOnline ? 'bg-emerald-500 animate-pulse' : 'bg-red-500'
-                          } shadow-md`} />
+                          } shadow-md border border-white/20`} />
                         </div>
                         
                         {/* Camera Info Overlay */}
-                        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black via-black/50 to-transparent p-2">
-                          <p className="text-white font-medium text-xs truncate">{camera.name}</p>
-                          <p className="text-slate-300 text-[10px]">
+                        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent p-3">
+                          <p className="text-white font-medium text-sm truncate">{camera.name}</p>
+                          <p className="text-slate-300 text-xs">
                             {isOnline ? 'Online' : 'Offline'} • {camera.lastUpdate}
                           </p>
                         </div>
                         
                         {/* Active Indicator */}
                         {isActive && (
-                          <div className="absolute inset-0 bg-blue-500 bg-opacity-10 flex items-center justify-center">
-                            <div className="bg-blue-500 text-white px-1 py-0.5 rounded text-[10px] font-medium">
+                          <div className="absolute inset-0 bg-blue-500 bg-opacity-15 flex items-center justify-center">
+                            <div className="bg-blue-500 text-white px-2 py-1 rounded text-xs font-medium shadow-lg">
                               ACTIVE
                             </div>
                           </div>
@@ -530,7 +579,8 @@ export default function DashboardPage() {
               })}
             </div>
           </div>
-        </div>
+          </div>
+        </ScrollArea>
 
 
         {/* Right Alerts Panel */}
@@ -538,11 +588,18 @@ export default function DashboardPage() {
           <div className="p-6 border-b border-slate-200 dark:border-neutral-700">
             <div className="flex items-center justify-between">
               <h2 className="text-lg font-semibold text-slate-800 dark:text-slate-200">Detection Alerts</h2>
-              {alerts.length > 0 && (
-                <Badge variant="destructive" className="bg-red-500 text-white animate-pulse">
-                  {alerts.length}
-                </Badge>
-              )}
+              <div className="flex items-center space-x-2">
+                {currentDetections.length > 0 && (
+                  <Badge variant="outline" className="bg-blue-50 text-blue-600 border-blue-200 animate-pulse">
+                    🎯 Live: {currentDetections[0]?.class_name}
+                  </Badge>
+                )}
+                {alerts.length > 0 && (
+                  <Badge variant="destructive" className="bg-red-500 text-white animate-pulse">
+                    {alerts.length}
+                  </Badge>
+                )}
+              </div>
             </div>
           </div>
           
@@ -588,7 +645,10 @@ export default function DashboardPage() {
                           <span>{new Date(alert.timestamp).toLocaleTimeString()}</span>
                           {alert.screenshot && (
                             <button 
-                              onClick={() => window.open(`http://localhost:5000${alert.screenshot}`, '_blank')}
+                              onClick={() => {
+                                const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000"
+                                window.open(`${apiUrl}${alert.screenshot}`, '_blank')
+                              }}
                               className="text-blue-500 hover:text-blue-600 underline"
                             >
                               View Screenshot

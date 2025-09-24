@@ -1,48 +1,39 @@
-from flask import Flask, request, jsonify, Response, send_from_directory
+from flask import Flask, request, jsonify, Response
 from flask_cors import CORS
 from flask_socketio import SocketIO, emit
-from flask_sqlalchemy import SQLAlchemy
 import cv2
 import numpy as np
 import base64
 import tensorflow as tf
 import json
+import threading
+import time
+from datetime import datetime
 from io import BytesIO
 from PIL import Image
 import logging
-import os
-from datetime import datetime, timedelta
-from threading import Thread
-import time
 
 app = Flask(__name__)
-CORS(app, resources={r"/*": {"origins": "http://localhost:3000"}})
-socketio = SocketIO(app, async_mode='threading', cors_allowed_origins="http://localhost:3000")
+app.config['SECRET_KEY'] = 'your-secret-key-here'
+# More permissive CORS for development
+CORS(app, origins="*")  # Allow all origins for development
+socketio = SocketIO(app, 
+                   cors_allowed_origins="*",  # Allow all origins for Socket.IO
+                   async_mode='threading',
+                   ping_timeout=20,
+                   ping_interval=25,
+                   logger=False,
+                   engineio_logger=False)
 
-# Database configuration
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///database.db'
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-db = SQLAlchemy(app)
-
-# Configure logging
-logging.basicConfig(level=logging.INFO)
+# Configure logging - enable debug level to see detection info
+logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
-# Database Model
-class Detection(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    timestamp = db.Column(db.DateTime, default=datetime.utcnow)
-    weapon_type = db.Column(db.String(50))
-    location = db.Column(db.String(50))
-    screenshot_path = db.Column(db.String(200))
-    confidence = db.Column(db.Float)
-
-    def __repr__(self):
-        return f"<Detection {self.id}: {self.weapon_type} at {self.location}>"
-
-# Create database tables
-with app.app_context():
-    db.create_all()
+# Global variables for camera management and detection history
+cameras = {}  # Will store camera objects
+detection_history = []  # Store detection history
+connected_clients = 0
+camera_lock = threading.Lock()
 
 
 # Load the TensorFlow/Keras weapon detection model
@@ -71,23 +62,6 @@ except Exception as e:
     logger.error(f"Critical error loading model: {e}")
     model = None
     class_names = []
-
-# Initialize video capture
-cap = None
-try:
-    cap = cv2.VideoCapture(0)  # Use webcam
-    if not cap.isOpened():
-        logger.error("Could not open video capture device")
-        cap = None
-    else:
-        logger.info("Video capture device opened successfully")
-except Exception as e:
-    logger.error(f"Error initializing video capture: {e}")
-    cap = None
-
-# Global variables for detection tracking
-last_detection_time = None
-cooldown_period = timedelta(seconds=60)
 
 def decode_base64_image(base64_string):
     """Decode base64 image string to OpenCV image"""
@@ -135,18 +109,18 @@ def classify_image(frame, confidence_threshold=0.5):
     """Classify the entire image for weapon detection and return results"""
     if model is None:
         logger.warning("Model is not loaded, skipping classification")
-        return []
+        return [], []
     
     try:
         # Validate input frame
         if frame is None or frame.size == 0:
             logger.warning("Invalid frame provided for classification")
-            return []
+            return [], []
         
         # Preprocess the image
         processed_image = preprocess_image_for_classification(frame)
         if processed_image is None:
-            return []
+            return [], []
         
         # Run inference
         predictions = model.predict(processed_image, verbose=0)
@@ -190,6 +164,169 @@ def classify_image(frame, confidence_threshold=0.5):
         logger.error(f"Error during classification: {type(e).__name__}: {e}")
         return [], []
 
+def initialize_camera(camera_index):
+    """Initialize a camera by index"""
+    try:
+        with camera_lock:
+            if camera_index in cameras:
+                # Camera already initialized
+                return True
+            
+            # Try to open the camera
+            cap = cv2.VideoCapture(camera_index)
+            if not cap.isOpened():
+                logger.warning(f"Could not open camera {camera_index}")
+                return False
+            
+            # Set camera properties for better performance
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+            cap.set(cv2.CAP_PROP_FPS, 30)
+            
+            cameras[camera_index] = cap
+            logger.info(f"Camera {camera_index} initialized successfully")
+            return True
+    except Exception as e:
+        logger.error(f"Error initializing camera {camera_index}: {e}")
+        return False
+
+def release_camera(camera_index):
+    """Release a camera by index"""
+    try:
+        with camera_lock:
+            if camera_index in cameras:
+                cameras[camera_index].release()
+                del cameras[camera_index]
+                logger.info(f"Camera {camera_index} released")
+                return True
+            return False
+    except Exception as e:
+        logger.error(f"Error releasing camera {camera_index}: {e}")
+        return False
+
+def get_camera_frame(camera_index):
+    """Get a frame from the specified camera"""
+    try:
+        with camera_lock:
+            if camera_index not in cameras:
+                # Try to initialize the camera if it doesn't exist
+                if not initialize_camera(camera_index):
+                    return None
+            
+            cap = cameras[camera_index]
+            ret, frame = cap.read()
+            
+            if not ret:
+                logger.warning(f"Failed to read from camera {camera_index}")
+                # Try to reinitialize the camera
+                release_camera(camera_index)
+                if initialize_camera(camera_index):
+                    cap = cameras[camera_index]
+                    ret, frame = cap.read()
+                    if not ret:
+                        return None
+                else:
+                    return None
+            
+            return frame
+    except Exception as e:
+        logger.error(f"Error getting frame from camera {camera_index}: {e}")
+        return None
+
+def generate_frames(camera_index):
+    """Generate frames for streaming with better error handling"""
+    frame_count = 0
+    detection_interval = 5  # Run detection every 5 frames for better responsiveness
+    
+    try:
+        while True:
+            frame = get_camera_frame(camera_index)
+            if frame is None:
+                # Send a placeholder image instead of breaking
+                placeholder = np.zeros((480, 640, 3), dtype=np.uint8)
+                cv2.putText(placeholder, f'Camera {camera_index} not available', (50, 240), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+                frame = placeholder
+            else:
+                # Only perform detection every N frames to reduce processing load
+                if frame_count % detection_interval == 0 and model is not None:
+                    try:
+                        logger.debug(f"Running detection on frame {frame_count}")
+                        detections, all_predictions = classify_image(frame, confidence_threshold=0.3)  # Lower threshold for better detection
+                        
+                        # Draw detection results and log all predictions
+                        logger.debug(f"Detection results: {len(detections)} detections, {len(all_predictions)} predictions")
+                        if all_predictions:
+                            logger.info(f"All predictions: {all_predictions}")
+                        
+                        if detections:
+                            for detection in detections:
+                                # Show all detections including 'No Weapon' for debugging
+                                label = f"{detection['class_name']}: {detection['confidence']:.2f}"
+                                color = (0, 255, 0) if detection['class_name'].lower() == 'no weapon' else (0, 0, 255)
+                                cv2.putText(frame, label, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
+                                
+                                # Emit detection for frontend display (including No Weapon for debugging)
+                                detection_data = {
+                                    'bbox': detection['bbox'],
+                                    'confidence': detection['confidence'],
+                                    'class_name': detection['class_name'],
+                                    'class_id': detection['class_id'],
+                                    'is_weapon': detection['class_name'].lower() != 'no weapon',
+                                    'timestamp': datetime.now().isoformat(),
+                                    'camera_index': camera_index
+                                }
+                                
+                                # Always emit detection data for frontend overlay
+                                socketio.emit('detection_result', detection_data)
+                                
+                                # Only emit alerts for actual weapons
+                                if detection['class_name'].lower() != 'no weapon' and detection['confidence'] > 0.3:
+                                    alert_data = {
+                                        'message': f"Weapon detected: {detection['class_name']}",
+                                        'timestamp': datetime.now().isoformat(),
+                                        'weapon_type': detection['class_name'],
+                                        'confidence': detection['confidence'],
+                                        'camera_index': camera_index
+                                    }
+                                    socketio.emit('detection', alert_data)
+                                    
+                                    # Add to history
+                                    detection_history.insert(0, {
+                                        'id': len(detection_history) + 1,
+                                        'date': datetime.now().isoformat(),
+                                        'weapon_type': detection['class_name'],
+                                        'location': f'Camera {camera_index}',
+                                        'screenshot': '',
+                                        'confidence': detection['confidence']
+                                    })
+                                    
+                                    # Keep only last 50 detections
+                                    if len(detection_history) > 50:
+                                        detection_history.pop()
+                    except Exception as e:
+                        logger.error(f"Detection error: {e}")
+                        # Continue without detection on error
+                        pass
+            
+            # Encode frame as JPEG with compression
+            encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), 80]
+            ret, buffer = cv2.imencode('.jpg', frame, encode_param)
+            if not ret:
+                continue
+            
+            frame_bytes = buffer.tobytes()
+            yield (b'--frame\r\n'
+                   b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
+            
+            frame_count += 1
+            time.sleep(0.066)  # ~15 FPS for better performance
+            
+    except GeneratorExit:
+        logger.info(f"Stream generator for camera {camera_index} stopped")
+    except Exception as e:
+        logger.error(f"Error in frame generation for camera {camera_index}: {e}")
+
 @app.route('/health', methods=['GET'])
 def health_check():
     """Health check endpoint"""
@@ -197,6 +334,32 @@ def health_check():
         'status': 'healthy',
         'model_loaded': model is not None
     })
+
+@app.route('/test-detection', methods=['GET'])
+def test_detection():
+    """Test detection with current camera frame"""
+    try:
+        if model is None:
+            return jsonify({'error': 'Model not loaded'}), 500
+            
+        # Get current frame from camera 0
+        frame = get_camera_frame(0)
+        if frame is None:
+            return jsonify({'error': 'No frame available from camera'}), 500
+        
+        # Run detection
+        detections, all_predictions = classify_image(frame, confidence_threshold=0.1)
+        
+        return jsonify({
+            'detections': detections,
+            'all_predictions': all_predictions,
+            'frame_shape': frame.shape,
+            'model_classes': class_names
+        })
+        
+    except Exception as e:
+        logger.error(f"Error in test detection: {e}")
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/detect', methods=['POST'])
 def detect():
@@ -299,168 +462,166 @@ def model_info():
         logger.error(f"Error getting model info: {e}")
         return jsonify({'error': str(e)}), 500
 
-# Frontend-compatible endpoints
-@app.route('/')
-def home():
-    return "Welcome to the Weapon Detection System"
+# API endpoints that the frontend expects
+@app.route('/api/model-status', methods=['GET'])
+def api_model_status():
+    """Get model status for dashboard"""
+    try:
+        # Check if main camera (index 0) is available
+        camera_status = 'connected' if 0 in cameras or initialize_camera(0) else 'disconnected'
+        
+        status = {
+            'status': 'loaded' if model is not None else 'error',
+            'model_loaded': model is not None,
+            'camera_status': camera_status,
+            'classes': class_names,
+            'num_classes': len(class_names) if class_names else 0,
+            'connected_clients': connected_clients
+        }
+        
+        return jsonify(status)
+    except Exception as e:
+        logger.error(f"Error getting model status: {e}")
+        return jsonify({'error': str(e)}), 500
 
+@app.route('/api/history', methods=['GET'])
+def api_history():
+    """Get detection history"""
+    try:
+        return jsonify({
+            'detections': detection_history,
+            'total': len(detection_history)
+        })
+    except Exception as e:
+        logger.error(f"Error getting history: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/camera/stop/<int:camera_index>', methods=['POST'])
+def api_camera_stop(camera_index):
+    """Stop a camera"""
+    try:
+        success = release_camera(camera_index)
+        return jsonify({
+            'success': success,
+            'message': f'Camera {camera_index} stopped' if success else f'Camera {camera_index} not found'
+        })
+    except Exception as e:
+        logger.error(f"Error stopping camera {camera_index}: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/camera/initialize/<int:camera_index>', methods=['POST'])
+def api_camera_initialize(camera_index):
+    """Initialize a camera"""
+    try:
+        success = initialize_camera(camera_index)
+        return jsonify({
+            'success': success,
+            'message': f'Camera {camera_index} initialized' if success else f'Failed to initialize camera {camera_index}'
+        })
+    except Exception as e:
+        logger.error(f"Error initializing camera {camera_index}: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/camera/check/<int:camera_index>', methods=['GET'])
+def api_camera_check(camera_index):
+    """Check if a camera is available"""
+    try:
+        available = camera_index in cameras
+        if not available:
+            # Try to test the camera
+            cap = cv2.VideoCapture(camera_index)
+            available = cap.isOpened()
+            if available:
+                cap.release()
+        
+        return jsonify({
+            'available': available,
+            'camera_index': camera_index
+        })
+    except Exception as e:
+        logger.error(f"Error checking camera {camera_index}: {e}")
+        return jsonify({'available': False, 'error': str(e)})
+
+# Video streaming endpoints
 @app.route('/stream')
-def stream():
-    """Live video stream with weapon detection"""
-    global last_detection_time
-    
-    def generate():
-        global last_detection_time
-        if cap is None:
-            # Return a placeholder image if no camera
-            logger.warning("No camera available, serving placeholder")
-            return
-            
-        try:
-            while cap.isOpened():
-                ret, frame = cap.read()
-                if not ret:
-                    logger.warning("Failed to read frame from camera")
-                    continue
-                
-                annotated_frame = frame.copy()
-                current_time = datetime.now()
-                
-                # Perform weapon detection
-                if model is not None:
-                    detections, all_predictions = classify_image(frame, confidence_threshold=0.5)
-                    
-                    # Check for weapon detections (exclude 'No Weapon' class)
-                    weapon_detections = [d for d in detections if d['class_name'] != 'No Weapon']
-                    
-                    if weapon_detections and (last_detection_time is None or 
-                        (current_time - last_detection_time) > cooldown_period):
-                        
-                        # Save screenshot
-                        os.makedirs('screenshots', exist_ok=True)
-                        timestamp = current_time.strftime("%Y%m%d_%H%M%S")
-                        screenshot_path = f"screenshots/{timestamp}.jpg"
-                        cv2.imwrite(screenshot_path, annotated_frame)
-                        
-                        # Save to database and emit socket event
-                        for detection in weapon_detections:
-                            weapon_type = detection['class_name']
-                            confidence = detection['confidence']
-                            
-                            db_detection = Detection(
-                                weapon_type=weapon_type, 
-                                location="Main Entrance", 
-                                screenshot_path=screenshot_path,
-                                confidence=confidence
-                            )
-                            
-                            with app.app_context():
-                                db.session.add(db_detection)
-                                db.session.commit()
-                                
-                                # Emit WebSocket event
-                                socketio.emit('detection', {
-                                    'message': f'{weapon_type} detected at {db_detection.location} (confidence: {confidence:.2f})',
-                                    'timestamp': db_detection.timestamp.isoformat(),
-                                    'screenshot': f'/screenshots/{os.path.basename(screenshot_path)}',
-                                    'weapon_type': weapon_type,
-                                    'confidence': confidence
-                                })
-                        
-                        last_detection_time = current_time
-                    
-                    # Draw detection results on frame
-                    if detections:
-                        height, width = frame.shape[:2]
-                        for detection in detections:
-                            if detection['class_name'] != 'No Weapon':
-                                # Draw bounding box (full frame for classification)
-                                cv2.rectangle(annotated_frame, (10, 10), (width-10, height-10), (0, 0, 255), 3)
-                                
-                                # Add text
-                                text = f"{detection['class_name']}: {detection['confidence']:.2f}"
-                                cv2.putText(annotated_frame, text, (20, 50), cv2.FONT_HERSHEY_SIMPLEX, 
-                                          1, (0, 0, 255), 2, cv2.LINE_AA)
-                
-                # Encode frame
-                try:
-                    _, buffer = cv2.imencode('.jpg', annotated_frame)
-                    frame_bytes = buffer.tobytes()
-                    yield (b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
-                except Exception as e:
-                    logger.error(f"Error encoding frame: {e}")
-                    continue
-                    
-        except Exception as e:
-            logger.error(f"Error in video stream: {e}")
-            return b''
-    
-    return Response(generate(), mimetype='multipart/x-mixed-replace; boundary=frame')
+def video_stream():
+    """Main camera stream"""
+    return Response(generate_frames(0), mimetype='multipart/x-mixed-replace; boundary=frame')
 
-@app.route('/screenshots/<filename>')
-def serve_screenshot(filename):
-    return send_from_directory('screenshots', filename)
+@app.route('/stream/<int:camera_index>')
+def video_stream_by_index(camera_index):
+    """Stream from specific camera"""
+    return Response(generate_frames(camera_index), mimetype='multipart/x-mixed-replace; boundary=frame')
 
-@app.route('/api/history')
-def get_history():
+# Socket.IO event handlers
+@socketio.on('connect')
+def handle_connect():
+    global connected_clients
+    connected_clients += 1
+    logger.info(f'Client connected. Total clients: {connected_clients}')
+    emit('status', {'connected': True, 'message': 'Connected to weapon detection system'})
+
+@socketio.on('disconnect')
+def handle_disconnect():
+    global connected_clients
+    connected_clients -= 1
+    logger.info(f'Client disconnected. Total clients: {connected_clients}')
+
+@socketio.on('request_status')
+def handle_status_request():
+    """Handle status requests from clients"""
     try:
-        detections = Detection.query.order_by(Detection.timestamp.desc()).all()
-        return jsonify({
-            'detections': [
-                {
-                    'id': d.id, 
-                    'date': d.timestamp.isoformat(), 
-                    'weapon_type': d.weapon_type,
-                    'location': d.location, 
-                    'screenshot': f'/screenshots/{os.path.basename(d.screenshot_path)}',
-                    'confidence': d.confidence
-                }
-                for d in detections
-            ]
-        })
+        camera_status = 'connected' if 0 in cameras else 'disconnected'
+        status = {
+            'model_loaded': model is not None,
+            'camera_status': camera_status,
+            'detections_count': len(detection_history),
+            'timestamp': datetime.now().isoformat()
+        }
+        emit('status_update', status)
     except Exception as e:
-        logger.error(f"Error in get_history: {e}")
-        return jsonify({'error': str(e)}), 500
+        logger.error(f"Error handling status request: {e}")
+        emit('error', {'message': str(e)})
 
-@app.route('/api/analysis/weapon-distribution')
-def weapon_distribution():
-    try:
-        distributions = db.session.query(Detection.weapon_type, db.func.count(Detection.id)).group_by(Detection.weapon_type).all()
-        return jsonify({
-            'labels': [d[0] for d in distributions], 
-            'data': [d[1] for d in distributions]
-        })
-    except Exception as e:
-        logger.error(f"Error in weapon_distribution: {e}")
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/api/model-status')
-def model_status():
-    """Get current model status and information"""
-    try:
-        return jsonify({
-            'model_type': 'tensorflow',
-            'weapon_classes': class_names,
-            'status': 'loaded' if model is not None else 'failed',
-            'camera_status': 'connected' if cap is not None and cap.isOpened() else 'disconnected'
-        })
-    except Exception as e:
-        logger.error(f"Error in model_status: {e}")
-        return jsonify({'error': str(e)}), 500
+def cleanup_cameras():
+    """Clean up all cameras on shutdown"""
+    global cameras
+    with camera_lock:
+        for camera_index in list(cameras.keys()):
+            try:
+                cameras[camera_index].release()
+                logger.info(f"Released camera {camera_index}")
+            except Exception as e:
+                logger.error(f"Error releasing camera {camera_index}: {e}")
+        cameras.clear()
 
 if __name__ == '__main__':
     logger.info("Starting Weapon Detection API Server...")
     logger.info(f"Model loaded: {model is not None}")
-    logger.info(f"Camera status: {'Connected' if cap is not None and cap.isOpened() else 'Disconnected'}")
+    logger.info(f"Model classes: {class_names}")
     
-    # Ensure screenshots directory exists
-    os.makedirs('screenshots', exist_ok=True)
+    # Initialize the main camera (camera 0) on startup
+    if initialize_camera(0):
+        logger.info("Main camera (0) initialized successfully")
+    else:
+        logger.warning("Main camera (0) could not be initialized - will try again on first request")
     
-    # Run the Flask app with SocketIO
-    socketio.run(
-        app,
-        host='0.0.0.0',  # Allow external connections
-        port=5000,
-        debug=True,
-        allow_unsafe_werkzeug=True  # For development only
-    )
+    try:
+        logger.info("Server starting on http://127.0.0.1:5000")
+        logger.info("Frontend dashboard: http://localhost:3000/dashboard")
+        
+        # Run the Flask-SocketIO app with threading mode for stability
+        socketio.run(
+            app,
+            host='localhost',  # Use localhost for frontend compatibility
+            port=5000,
+            debug=False,  # Disable debug for production stability
+            use_reloader=False,  # Disable auto-reloader
+            log_output=True
+        )
+    except KeyboardInterrupt:
+        logger.info("Shutting down server...")
+    except Exception as e:
+        logger.error(f"Server error: {e}")
+    finally:
+        cleanup_cameras()
