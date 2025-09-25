@@ -14,6 +14,13 @@ Instant Alerts – Sends live notifications to security personnel.
 Geo-Aware Escalation – Automatically maps camera location to the nearest police station.
 Secure Evidence Sharing – Sends annotated snapshots & metadata only; full video remains secure on-premises.
 
+Output:
+
+<video src="frontend/CodeVerse.mp4" controls="controls" width="600">
+  Output Video.
+</video>
+
+
 🚀 Key Features
 
 ✅ End-to-End Pipeline: Detection → Classification → Context Awareness → Escalation
