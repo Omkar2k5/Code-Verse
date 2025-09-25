@@ -15,9 +15,13 @@ Geo-Aware Escalation – Automatically maps camera location to the nearest polic
 Secure Evidence Sharing – Sends annotated snapshots & metadata only; full video remains secure on-premises.
 
 🚀 Key Features
+
 ✅ End-to-End Pipeline: Detection → Classification → Context Awareness → Escalation
+
 ✅ Multi-Channel Alerts: Webhooks, SMS, Email, API calls
+
 ✅ Privacy-Preserving: Only essential metadata shared
+
 ✅ Cloud + On-Prem Deployment: Scalable, fault-tolerant
 
 🛠️ Tech Stack
